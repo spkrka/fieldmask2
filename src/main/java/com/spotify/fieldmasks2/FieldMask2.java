@@ -15,19 +15,21 @@ import java.util.Set;
 
 public class FieldMask2<T extends Message> {
 
-  private static final FieldMask2<Message> KEEP_NONE = new FieldMask2<>(Collections.emptyMap(), Collections.emptySet(), false, true);
-  private static final FieldMask2<Message> KEEP_ALL = new FieldMask2<>(Collections.emptyMap(), Collections.emptySet(), true, false);
+  private static final FieldMask2<Message> KEEP_NONE = new FieldMask2<>(Collections.emptyMap(), Collections.emptySet(), false, true, null);
+  private static final FieldMask2<Message> KEEP_ALL = new FieldMask2<>(Collections.emptyMap(), Collections.emptySet(), true, false, null);
 
   private final Map<Descriptors.FieldDescriptor, FieldMask2<Message>> subMessageMasks;
   private final Set<Descriptors.FieldDescriptor> primitiveMasks;
   private final boolean keepAll;
   private final boolean keepNone;
+  private final Descriptors.Descriptor messageDescriptor;
 
-  public FieldMask2(Map<Descriptors.FieldDescriptor, FieldMask2<Message>> subMessageMasks, Set<Descriptors.FieldDescriptor> primitiveMasks, boolean keepAll, boolean keepNone) {
+  private FieldMask2(Map<Descriptors.FieldDescriptor, FieldMask2<Message>> subMessageMasks, Set<Descriptors.FieldDescriptor> primitiveMasks, boolean keepAll, boolean keepNone, Descriptors.Descriptor messageDescriptor) {
     this.subMessageMasks = subMessageMasks;
     this.primitiveMasks = primitiveMasks;
     this.keepAll = keepAll;
     this.keepNone = keepNone;
+    this.messageDescriptor = messageDescriptor;
   }
 
   public T scrub(T message) {
@@ -37,6 +39,7 @@ public class FieldMask2<T extends Message> {
     if (keepNone) {
       return (T) message.getDefaultInstanceForType();
     }
+    checkCompatible(message.getDescriptorForType());
 
     Message.Builder builder = message.newBuilderForType();
     mergeInner(message, builder);
@@ -44,11 +47,10 @@ public class FieldMask2<T extends Message> {
   }
 
   public void merge(T message, Message.Builder builder) {
-    Descriptors.Descriptor messageType = message.getDescriptorForType();
-    Descriptors.Descriptor builderType = builder.getDescriptorForType();
-    if (messageType != builderType) {
-      throw new IllegalArgumentException("Can't merge " + messageType.getFullName() + " into " + builderType.getFullName());
+    if (messageDescriptor == null) {
+      throw new IllegalArgumentException("Can't use merge with internal field masks");
     }
+    checkCompatible(builder.getDescriptorForType());
 
     if (keepAll) {
       builder.mergeFrom(message);
@@ -62,58 +64,54 @@ public class FieldMask2<T extends Message> {
     mergeInner(message, builder);
   }
 
+  private void checkCompatible(Descriptors.Descriptor otherDescriptor) {
+    if (messageDescriptor != otherDescriptor) {
+      throw new IllegalArgumentException("Other descriptor is not compatible. Expected " + messageDescriptor.getFullName() + " but got " + otherDescriptor.getFullName());
+    }
+  }
+
   private void mergeInner(T message, Message.Builder builder) {
-    Descriptors.Descriptor descriptorForType = message.getDescriptorForType();
-    List<Descriptors.FieldDescriptor> fields = descriptorForType.getFields();
-    for (Descriptors.FieldDescriptor field : fields) {
-      Descriptors.FieldDescriptor.Type type = field.getType();
-      if (type == Descriptors.FieldDescriptor.Type.MESSAGE) {
-        FieldMask2<Message> subMask = subMessageMasks.get(field);
-        if (subMask != null) {
-          if (field.isRepeated()) {
-            int count = message.getRepeatedFieldCount(field);
-            for (int i = 0; i < count; i++) {
-              Message value = (Message) message.getRepeatedField(field, i);
-              builder.addRepeatedField(field, subMask.scrub(value));
-            }
-          } else {
-            Message value = (Message) message.getField(field);
-            if (value != null) {
-              builder.setField(field, subMask.scrub(value));
-            }
-          }
+    for (Map.Entry<Descriptors.FieldDescriptor, FieldMask2<Message>> entry : subMessageMasks.entrySet()) {
+      Descriptors.FieldDescriptor field = entry.getKey();
+      FieldMask2<Message> subMask = entry.getValue();
+      if (field.isRepeated()) {
+        int count = message.getRepeatedFieldCount(field);
+        for (int i = 0; i < count; i++) {
+          Message value = (Message) message.getRepeatedField(field, i);
+          builder.addRepeatedField(field, subMask.scrub(value));
         }
       } else {
-        if (primitiveMasks.contains(field)) {
-          if (field.isRepeated()) {
-            int count = message.getRepeatedFieldCount(field);
-            for (int i = 0; i < count; i++) {
-              Object value = message.getRepeatedField(field, i);
-              builder.addRepeatedField(field, value);
-            }
-          } else {
-            Object value = message.getField(field);
-            if (value != null) {
-              builder.setField(field, value);
-            }
-          }
+        Message value = (Message) message.getField(field);
+        if (value != null) {
+          builder.setField(field, subMask.scrub(value));
         }
       }
-
+    }
+    for (Descriptors.FieldDescriptor field : primitiveMasks) {
+      if (field.isRepeated()) {
+        int count = message.getRepeatedFieldCount(field);
+        for (int i = 0; i < count; i++) {
+          Object value = message.getRepeatedField(field, i);
+          builder.addRepeatedField(field, value);
+        }
+      } else {
+        Object value = message.getField(field);
+        if (value != null) {
+          builder.setField(field, value);
+        }
+      }
     }
   }
 
   public FieldMask2<T> union(FieldMask2<T> other) {
-    if (keepAll) {
+    if (keepAll || other.keepNone) {
       return this;
     }
-    if (other.keepAll) {
+    if (other.keepAll || keepNone) {
       return other;
     }
 
-    if (keepNone && other.keepNone) {
-      return this;
-    }
+    checkCompatible(other.messageDescriptor);
 
     Map<Descriptors.FieldDescriptor, FieldMask2<Message>> subMessageMasks = new HashMap<>();
     HashSet<Descriptors.FieldDescriptor> primitiveMasks = new HashSet<>();
@@ -129,20 +127,18 @@ public class FieldMask2<T extends Message> {
     }
     primitiveMasks.addAll(this.primitiveMasks);
     primitiveMasks.addAll(other.primitiveMasks);
-    return new FieldMask2<>(subMessageMasks, primitiveMasks, false, false);
+    return new FieldMask2<>(subMessageMasks, primitiveMasks, false, false, messageDescriptor);
   }
 
   public FieldMask2<T> intersect(FieldMask2<T> other) {
-    if (keepNone) {
+    if (keepNone || other.keepAll) {
       return this;
     }
-    if (other.keepNone) {
+    if (other.keepNone || keepAll) {
       return other;
     }
 
-    if (keepAll && other.keepAll) {
-      return this;
-    }
+    checkCompatible(other.messageDescriptor);
 
     Map<Descriptors.FieldDescriptor, FieldMask2<Message>> subMessageMasks = new HashMap<>();
     HashSet<Descriptors.FieldDescriptor> primitiveMasks = new HashSet<>();
@@ -159,7 +155,7 @@ public class FieldMask2<T extends Message> {
     primitiveMasks.addAll(this.primitiveMasks);
     primitiveMasks.retainAll(other.primitiveMasks);
 
-    return new FieldMask2<>(subMessageMasks, primitiveMasks, false, false);
+    return new FieldMask2<>(subMessageMasks, primitiveMasks, false, false, messageDescriptor);
   }
 
   @Override
@@ -301,13 +297,13 @@ public class FieldMask2<T extends Message> {
     if (field.getType() == Descriptors.FieldDescriptor.Type.MESSAGE) {
       Descriptors.Descriptor childDescriptor = field.getMessageType();
       FieldMask2<Message> child = createSinglePath(childDescriptor, segments, index + 1);
-      return new FieldMask2<>(Collections.singletonMap(field, child), Collections.emptySet(), false, false);
+      return new FieldMask2<>(Collections.singletonMap(field, child), Collections.emptySet(), false, false, descriptor);
     } else {
       if (index < segments.length - 1) {
         throw new PrimitiveFieldException(descriptor, segment);
       }
 
-      return new FieldMask2<>(Collections.emptyMap(), Collections.singleton(field), false, false);
+      return new FieldMask2<>(Collections.emptyMap(), Collections.singleton(field), false, false, descriptor);
     }
   }
 }
