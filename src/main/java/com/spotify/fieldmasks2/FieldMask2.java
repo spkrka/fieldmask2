@@ -39,7 +39,30 @@ public class FieldMask2<T extends Message> {
     }
 
     Message.Builder builder = message.newBuilderForType();
+    mergeInner(message, builder);
+    return (T) builder.build();
+  }
 
+  public void merge(T message, Message.Builder builder) {
+    Descriptors.Descriptor messageType = message.getDescriptorForType();
+    Descriptors.Descriptor builderType = builder.getDescriptorForType();
+    if (messageType != builderType) {
+      throw new IllegalArgumentException("Can't merge " + messageType.getFullName() + " into " + builderType.getFullName());
+    }
+
+    if (keepAll) {
+      builder.mergeFrom(message);
+      return;
+    }
+    if (keepNone) {
+      return;
+    }
+
+
+    mergeInner(message, builder);
+  }
+
+  private void mergeInner(T message, Message.Builder builder) {
     Descriptors.Descriptor descriptorForType = message.getDescriptorForType();
     List<Descriptors.FieldDescriptor> fields = descriptorForType.getFields();
     for (Descriptors.FieldDescriptor field : fields) {
@@ -78,8 +101,6 @@ public class FieldMask2<T extends Message> {
       }
 
     }
-
-    return (T) builder.build();
   }
 
   public FieldMask2<T> union(FieldMask2<T> other) {
