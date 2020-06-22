@@ -247,6 +247,45 @@ public class FieldMask2<T extends Message> {
     }
   }
 
+  public static <T extends Message> FieldMask2<T> fromMessage(T message) {
+    if (message.equals(message.getDefaultInstanceForType())) {
+      return (FieldMask2<T>) KEEP_ALL;
+    }
+
+    Map<Descriptors.FieldDescriptor, FieldMask2<Message>> subs = new HashMap<>();
+    HashSet<Descriptors.FieldDescriptor> primitiveMasks = new HashSet<>();
+
+    final Map<Descriptors.FieldDescriptor, Object> fields = message.getAllFields();
+    for (Map.Entry<Descriptors.FieldDescriptor, Object> entry : fields.entrySet()) {
+      Object value = entry.getValue();
+      if (value != null) {
+        Descriptors.FieldDescriptor key = entry.getKey();
+        if (key.getType() == Descriptors.FieldDescriptor.Type.MESSAGE) {
+          Object value2 = getFirst(message, key);
+          if (value2 != null) {
+            subs.put(key, fromMessage((Message) value2));
+          }
+        } else {
+          Object value2 = getFirst(message, key);
+          if (value2 != null && !value2.equals(key.getDefaultValue())) {
+            primitiveMasks.add(key);
+          }
+        }
+      }
+    }
+    return new FieldMask2<>(subs, primitiveMasks, false, false, message.getDescriptorForType());
+  }
+
+  private static <T extends Message> Object getFirst(T message, Descriptors.FieldDescriptor key) {
+    if (key.isRepeated()) {
+      if (message.getRepeatedFieldCount(key) > 0) {
+        return message.getRepeatedField(key, 0);
+      }
+      return null;
+    }
+    return message.getField(key);
+  }
+
   public static <T extends Message> FieldMask2<T> fromFieldMask(T template, FieldMask fieldMask) {
     return create(template, fieldMask.getPathsList());
   }

@@ -149,4 +149,33 @@ public class FieldMask2Test {
     Set<String> actual = new TreeSet<>(FieldMask2.create(DescriptorProtos.DescriptorProto.getDefaultInstance(), input).toFieldMask().getPathsList());
     assertEquals(actual, expected);
   }
+
+  @Test
+  public void testFieldMaskFromTemplate() {
+    FieldMask2<DescriptorProtos.DescriptorProto> expected = FieldMask2.create(DescriptorProtos.DescriptorProto.getDefaultInstance(), "enum_type.reserved_name");
+    FieldMask2<DescriptorProtos.DescriptorProto> actual = FieldMask2.fromMessage(DescriptorProtos.DescriptorProto.newBuilder().addEnumType(
+            DescriptorProtos.EnumDescriptorProto.newBuilder()
+                    .addReservedName("x")
+                    .build()
+    ).build());
+    assertEquals(actual, expected);
+  }
+
+  @Test
+  public void testFieldMaskFromTemplate2() {
+    FieldMask2<DescriptorProtos.DescriptorProto> expected = FieldMask2.create(
+            DescriptorProtos.DescriptorProto.getDefaultInstance(),
+            "enum_type.reserved_name",
+            "enum_type.value");
+
+    FieldMask2<DescriptorProtos.DescriptorProto> actual = FieldMask2.fromMessage(
+            DescriptorProtos.DescriptorProto.newBuilder().addEnumType(
+                    DescriptorProtos.EnumDescriptorProto.newBuilder()
+                            .addReservedName("x")
+                            .addValue(DescriptorProtos.EnumValueDescriptorProto.newBuilder().build())
+                            .build())
+                    .build()
+    );
+    assertEquals(actual, expected);
+  }
 }
